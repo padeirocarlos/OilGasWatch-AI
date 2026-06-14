@@ -1,0 +1,23 @@
+# Feature construction parameters (see src/config.py:FeaturesConfig).
+# No feature constant is hardcoded in function bodies (AGENT.md §2, §8).
+
+spectral_window_s: 256.0
+spectral_channels: [P-PDG, P-TPT, PT-P, QGL]
+# Frequency bands in Hz for band-power features.
+spectral_bands:
+  - [0.0, 0.01]
+  - [0.01, 0.05]
+  - [0.05, 0.2]
+
+oscillation_window_s: 256.0
+
+# Numerical guards.
+differential_eps: 1.0e-6
+rolling_diff_window_s: 10.0
+
+# Hydrate-equilibrium curve: P_eq = exp(a + b / (T + c)), P in Pa, T in degC.
+# TODO: validate coefficients against PVT data before trusting hydrate_margin.
+hydrate_curve:
+  a: 30.0
+  b: -8000.0
+  c: 273.15

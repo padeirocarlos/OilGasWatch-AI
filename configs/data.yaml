@@ -1,0 +1,16 @@
+# Data paths, resampling grid, and split policy (see src/config.py:DataConfig).
+dataset_dir: /home/padeiroc/ai_project/OilGasWatch-AI/dataset
+runs_dir: runs
+
+# Regular resample grid. Raw 3W data is ~1 Hz.
+resample_rate_s: 1.0
+# Forward-fill gaps up to this many seconds; beyond -> is_missing indicator.
+max_gap_s: 30.0
+# Rolling window used to flag frozen (zero-variance) sensors.
+frozen_window_s: 60.0
+frozen_eps: 1.0e-9
+
+# Provenance to include: real | simulated | hand_drawn.
+include_sources: [real, simulated, hand_drawn]
+
+seed: 42

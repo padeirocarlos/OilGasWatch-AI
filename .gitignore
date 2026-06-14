@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# OilGasWatch-AI: large data & run artifacts (not version-controlled)
+/dataset/
+/runs/
