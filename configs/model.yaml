@@ -38,10 +38,10 @@ loss:
 
 train:
   batch_size: 64
-  epochs: 30
+  epochs: 90
   lr: 1.0e-3
   weight_decay: 1.0e-4
   seed: 42
   device: auto
-  ssl_epochs: 0
+  ssl_epochs: 10
   ssl_mask_ratio: 0.5

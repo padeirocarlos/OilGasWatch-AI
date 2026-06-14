@@ -29,7 +29,7 @@ def subsystem_indices() -> list[list[int]]:
 
 
 class STMoE(nn.Module):
-    def __init__(self, cfg: ModelConfig, n_states: int = 8) -> None:
+    def __init__(self, cfg: ModelConfig, n_states: int = 8, n_eng_features: int = 0) -> None:
         super().__init__()
         self.cfg = cfg
         self.subsystems = subsystem_indices()
@@ -41,10 +41,34 @@ class STMoE(nn.Module):
         )
         self.fusion = WellGraphAttention(len(self.subsystems), dim)
         self.gate = Gating(cfg.moe)
-        self.heads = Heads(dim, cfg.heads, n_states=n_states)
 
-    def forward(self, x: torch.Tensor, expert_mask: torch.Tensor | None = None) -> dict:
-        """x: (B, T, 27). expert_mask: (B, n_experts) with 1 = present (optional)."""
+        # Hybrid branch: project the per-window engineered feature vector (the GBT's exact
+        # inputs) to `dim` and concatenate to the learned mixture before the heads. This hands
+        # the network the physics signal (hydrate margin, choke coeffs, differentials) directly
+        # — bypassing the lossy temporal pooling — so it can match the GBT where the GBT wins
+        # while keeping its own temporal / early-detection edge. Features are per-feature
+        # standardised upstream (train stats), so the MLP sees well-conditioned inputs.
+        self.n_eng = n_eng_features
+        self.eng_proj: nn.Module | None = None
+        if n_eng_features > 0:
+            self.eng_proj = nn.Sequential(
+                nn.Linear(n_eng_features, dim),
+                nn.GELU(),
+                nn.Dropout(cfg.encoder.dropout),
+                nn.Linear(dim, dim),
+            )
+            head_in = 2 * dim
+        else:
+            head_in = dim
+        self.heads = Heads(head_in, cfg.heads, n_states=n_states)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        eng: torch.Tensor | None = None,
+        expert_mask: torch.Tensor | None = None,
+    ) -> dict:
+        """x: (B, T, 27). eng: (B, n_eng) engineered features (hybrid). expert_mask: (B, E)."""
         # 1) Encode: each expert sees only its own channel slice of the window.
         embeds = []
         for idx, enc in zip(self.subsystems, self.experts, strict=True):
@@ -56,7 +80,10 @@ class STMoE(nn.Module):
         # end-to-end — the single source of graceful degradation (AGENT.md §7).
         fused = self.fusion(nodes, mask=expert_mask)
         mixture, gate_w = self.gate(fused, mask=expert_mask)
-        # 4) Heads: multi-task outputs share the mixture; expose gate weights for
+        # 4) Hybrid: graft the engineered-feature embedding onto the learned mixture.
+        if self.eng_proj is not None and eng is not None:
+            mixture = torch.cat([mixture, self.eng_proj(eng)], dim=-1)
+        # 5) Heads: multi-task outputs share the representation; expose gate weights for
         # interpretability / robustness analysis of which subsystem drove the call.
         out = self.heads(mixture)
         out["gate_weights"] = gate_w

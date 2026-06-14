@@ -134,19 +134,29 @@ class SequenceDataset:
     # scored for time-to-detection (latency from onset) on the same footing as the baseline.
     instance_id: np.ndarray  # (n_win,) object
     order: np.ndarray  # (n_win,) window start sample index (chronological within instance)
+    # Optional hybrid inputs: the GBT's de-leaked aggregated engineered features per window,
+    # so the deep model can use the physics signal alongside the raw sequence. None = raw-only.
+    feat: np.ndarray | None = None  # (n_win, n_eng) float32
+    feat_names: list[str] | None = None
 
     def __len__(self) -> int:
         return len(self.X)
 
 
 def _prepare_instance_windows(
-    meta: InstanceMeta, dcfg: DataConfig, mcfg: ModelConfig, normalise_signals: bool
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    meta: InstanceMeta,
+    dcfg: DataConfig,
+    fcfg: FeaturesConfig,
+    mcfg: ModelConfig,
+    normalise_signals: bool,
+    with_features: bool = False,
+):
     """Ingest one instance and produce its kept windows + per-window labels.
 
-    Returns ``(seq, event, transient, state, order)`` for the valid (labelled) windows,
-    or ``None`` when the instance yields no usable window. Shared by the in-RAM and the
-    memmap builders so both apply identical scaling, windowing and labelling.
+    Returns ``(seq, event, transient, state, order, feat, feat_names)`` for the valid
+    (labelled) windows, or ``None`` when the instance yields no usable window. ``feat`` is
+    the aggregated engineered feature matrix (hybrid model) or ``None`` when not requested.
+    Shared by the in-RAM and the memmap builders so both apply identical scaling/labelling.
     """
     inst = load_and_resample(meta.path, dcfg)
     sig = inst.df[SIGNAL_COLUMNS].copy()
@@ -180,7 +190,18 @@ def _prepare_instance_windows(
         return None
     seq = sequence_windows(sig, bounds, SIGNAL_COLUMNS)[keep]
     starts = np.array([s for s, _ in bounds], dtype=np.int64)[keep]
-    return seq, labels.event[keep], labels.transient[keep], labels.state[keep], starts
+
+    feat = None
+    feat_names = None
+    if with_features:
+        # Same de-leaked aggregated features the GBT uses (exclude labels + "__" diagnostics).
+        fdf = build_features(inst, fcfg)
+        skip = ("class", "state")
+        feat_cols = [c for c in fdf.columns if c not in skip and not c.startswith("__")]
+        feat = aggregate_features(fdf, bounds, feat_cols)[keep].astype(np.float32)
+        feat_names = aggregate_feature_names(feat_cols)
+    e, t, s = labels.event[keep], labels.transient[keep], labels.state[keep]
+    return seq, e, t, s, starts, feat, feat_names
 
 
 def build_sequence_dataset(
@@ -189,16 +210,19 @@ def build_sequence_dataset(
     fcfg: FeaturesConfig,
     mcfg: ModelConfig,
     normalise_signals: bool = True,
+    with_features: bool = False,
     progress: bool = True,
 ) -> SequenceDataset:
     """Build raw sequence windows in RAM. Use :func:`build_sequence_memmap` instead when
-    the full dataset would not fit in memory."""
-    Xs, ev, tr, stt, wid, iid, ordr = [], [], [], [], [], [], []
+    the full dataset would not fit in memory. ``with_features`` also attaches the aggregated
+    engineered feature vector per window (hybrid model input)."""
+    Xs, ev, tr, stt, wid, iid, ordr, fts = [], [], [], [], [], [], [], []
+    feat_names: list[str] | None = None
     for meta in tqdm(metas, desc="seq-windowing", disable=not progress):
-        res = _prepare_instance_windows(meta, dcfg, mcfg, normalise_signals)
+        res = _prepare_instance_windows(meta, dcfg, fcfg, mcfg, normalise_signals, with_features)
         if res is None:
             continue
-        seq, e, t, s, starts = res
+        seq, e, t, s, starts, feat, fnames = res
         Xs.append(seq)
         ev.append(e)
         tr.append(t)
@@ -207,6 +231,9 @@ def build_sequence_dataset(
         n = len(seq)
         wid.append(np.full(n, meta.well_id, dtype=object))
         iid.append(np.full(n, meta.instance_id, dtype=object))
+        if with_features:
+            fts.append(feat)
+            feat_names = fnames
 
     if not Xs:
         raise ValueError("no valid sequence windows produced")
@@ -220,6 +247,8 @@ def build_sequence_dataset(
         well_id=np.concatenate(wid),
         instance_id=np.concatenate(iid),
         order=np.concatenate(ordr),
+        feat=np.concatenate(fts) if with_features else None,
+        feat_names=feat_names,
     )
 
 
@@ -230,6 +259,7 @@ def build_sequence_memmap(
     mcfg: ModelConfig,
     cache_path: str | Path,
     normalise_signals: bool = True,
+    with_features: bool = False,
     progress: bool = True,
 ) -> SequenceDataset:
     """Build the sequence windows on disk and return a memmap-backed dataset.
@@ -239,20 +269,24 @@ def build_sequence_memmap(
     memory is one instance's windows plus the small label arrays. The returned
     ``SequenceDataset.X`` is a read-only ``np.memmap``, so training/eval page windows in
     on demand (OS-cached, reclaimable) — this is what unblocks full-data deep training.
+    ``with_features`` also attaches per-window engineered features (kept in RAM — small).
     """
     win_len = max(1, int(round(mcfg.window.window_s / dcfg.resample_rate_s)))
     n_channels = len(SIGNAL_COLUMNS)
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ev, tr, stt, wid, iid, ordr = [], [], [], [], [], []
+    ev, tr, stt, wid, iid, ordr, fts = [], [], [], [], [], [], []
+    feat_names: list[str] | None = None
     total = 0
     with open(cache_path, "wb") as fp:
         for meta in tqdm(metas, desc="seq-memmap", disable=not progress):
-            res = _prepare_instance_windows(meta, dcfg, mcfg, normalise_signals)
+            res = _prepare_instance_windows(
+                meta, dcfg, fcfg, mcfg, normalise_signals, with_features
+            )
             if res is None:
                 continue
-            seq, e, t, s, starts = res
+            seq, e, t, s, starts, feat, fnames = res
             if seq.shape[1] != win_len:
                 # All windows must share win_len to live in a fixed-shape memmap. With
                 # min_window_s == window_s this never triggers; skip defensively if it does.
@@ -268,6 +302,9 @@ def build_sequence_memmap(
             n = len(seq)
             wid.append(np.full(n, meta.well_id, dtype=object))
             iid.append(np.full(n, meta.instance_id, dtype=object))
+            if with_features:
+                fts.append(feat)
+                feat_names = fnames
 
     if total == 0:
         cache_path.unlink(missing_ok=True)
@@ -282,4 +319,6 @@ def build_sequence_memmap(
         well_id=np.concatenate(wid),
         instance_id=np.concatenate(iid),
         order=np.concatenate(ordr),
+        feat=np.concatenate(fts) if with_features else None,
+        feat_names=feat_names,
     )

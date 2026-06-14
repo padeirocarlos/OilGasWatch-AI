@@ -143,6 +143,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         limit_per_class=args.limit_per_class or None,
         stratified=args.stratified,
         streaming=args.streaming,
+        hybrid=args.hybrid,
         progress=True,
     )
     log.info("stmoe macro-F1=%.4f", metrics["macro_f1"])
@@ -206,6 +207,9 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--stride-s", type=float, default=0.0, help="window stride (0=config)")
     t.add_argument(
         "--streaming", action="store_true", help="build windows on disk (memmap) for full data"
+    )
+    t.add_argument(
+        "--hybrid", action="store_true", help="inject engineered features into the ST-MoE"
     )
     t.set_defaults(func=cmd_train)
 

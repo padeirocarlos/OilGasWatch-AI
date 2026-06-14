@@ -35,12 +35,14 @@ class _SeqTorchDataset(Dataset):
         self.transient = ds.transient.astype(np.int64)  # binary onset flag
         # Remap state: unknown (-1) stays -1 (ignored); others are dense 0..K-1 ids.
         self.state = ds.state.astype(np.int64)
+        # Optional hybrid engineered features (already standardised upstream); None = raw-only.
+        self.feat = ds.feat
 
     def __len__(self) -> int:
         return len(self.X)
 
     def __getitem__(self, i: int) -> dict:
-        return {
+        item = {
             # X may be float16 RAM or a read-only memmap; np.asarray(..., float32) gives a
             # writable contiguous copy of just this window (memmap-safe, no whole-array load).
             "x": torch.from_numpy(np.asarray(self.X[i], dtype=np.float32)),
@@ -48,15 +50,21 @@ class _SeqTorchDataset(Dataset):
             "transient": int(self.transient[i]),
             "state": int(self.state[i]),
         }
+        if self.feat is not None:
+            item["eng"] = torch.from_numpy(np.asarray(self.feat[i], dtype=np.float32))
+        return item
 
 
 def _collate(items: list[dict]) -> dict:
-    return {
+    batch = {
         "x": torch.stack([it["x"] for it in items]),
         "event": torch.tensor([it["event"] for it in items], dtype=torch.long),
         "transient": torch.tensor([it["transient"] for it in items], dtype=torch.long),
         "state": torch.tensor([it["state"] for it in items], dtype=torch.long),
     }
+    if "eng" in items[0]:
+        batch["eng"] = torch.stack([it["eng"] for it in items])
+    return batch
 
 
 @dataclass
@@ -90,7 +98,9 @@ def train_stmoe(
     # Number of state classes is inferred from the data (max dense id + 1); the -1
     # "unknown" sentinel is excluded via max(.., 0) so it never inflates the count.
     n_states = int(max(train_ds.state.max(), 0)) + 1
-    net = STMoE(mcfg, n_states=n_states).to(device)
+    # Hybrid: if the dataset carries engineered features, size the injection branch to them.
+    n_eng = int(train_ds.feat.shape[1]) if train_ds.feat is not None else 0
+    net = STMoE(mcfg, n_states=n_states, n_eng_features=n_eng).to(device)
 
     # Class-balanced focal loss for the imbalanced event head.
     # effective_number_weights down-weights common classes (NORMAL) per Cui et al. 2019.
@@ -128,7 +138,7 @@ def train_stmoe(
         t0 = time.time()
         for batch in loader:
             batch = {k: v.to(device) for k, v in batch.items()}
-            out = net(batch["x"])  # forward: dict of event/transient/state logits
+            out = net(batch["x"], eng=batch.get("eng"))  # event/transient/state logits
             loss, parts = criterion(out, batch)  # weighted multi-task scalar + parts
             opt.zero_grad()
             loss.backward()
@@ -169,7 +179,10 @@ def _quick_event_acc(net: STMoE, ds: SequenceDataset, device: str, bs: int) -> f
     y = ds.event
     for i in range(0, len(X), bs):
         xb = torch.from_numpy(np.asarray(X[i : i + bs], dtype=np.float32)).to(device)
-        pred = net(xb)["event"].argmax(-1).cpu().numpy()
+        eng = None
+        if ds.feat is not None:
+            eng = torch.from_numpy(np.asarray(ds.feat[i : i + bs], dtype=np.float32)).to(device)
+        pred = net(xb, eng=eng)["event"].argmax(-1).cpu().numpy()
         correct += int((pred == y[i : i + bs]).sum())
         total += len(pred)
     return correct / max(1, total)

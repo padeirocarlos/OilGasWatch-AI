@@ -162,6 +162,7 @@ def run_stmoe(
     limit_per_class: int | None = None,
     stratified: bool = False,
     streaming: bool = False,
+    hybrid: bool = False,
     progress: bool = True,
 ) -> dict:
     """Train the ST-MoE on a well-disjoint split and evaluate on held-out wells.
@@ -202,14 +203,35 @@ def run_stmoe(
     cache_dir = Path(dcfg.runs_dir) / "_seqcache"
     if streaming:
         train_ds = build_sequence_memmap(
-            split.train, dcfg, fcfg, mcfg, cache_dir / "train.f16", progress=progress
+            split.train, dcfg, fcfg, mcfg, cache_dir / "train.f16",
+            with_features=hybrid, progress=progress,
         )
         test_ds = build_sequence_memmap(
-            split.test, dcfg, fcfg, mcfg, cache_dir / "test.f16", progress=progress
+            split.test, dcfg, fcfg, mcfg, cache_dir / "test.f16",
+            with_features=hybrid, progress=progress,
         )
     else:
-        train_ds = build_sequence_dataset(split.train, dcfg, fcfg, mcfg, progress=progress)
-        test_ds = build_sequence_dataset(split.test, dcfg, fcfg, mcfg, progress=progress)
+        train_ds = build_sequence_dataset(
+            split.train, dcfg, fcfg, mcfg, with_features=hybrid, progress=progress
+        )
+        test_ds = build_sequence_dataset(
+            split.test, dcfg, fcfg, mcfg, with_features=hybrid, progress=progress
+        )
+
+    # Hybrid: robustly standardise the engineered features using TRAIN stats only
+    # (leakage-clean), applied to both splits. Engineered features are heavy-tailed, so
+    # mean/std + a single outlier yields extreme z-scores that NaN the injection MLP — use
+    # median/IQR and clip to ±10 so the MLP always sees well-conditioned, bounded inputs.
+    if hybrid and train_ds.feat is not None:
+        med = np.median(train_ds.feat, axis=0)
+        iqr = np.percentile(train_ds.feat, 75, axis=0) - np.percentile(train_ds.feat, 25, axis=0)
+        iqr[iqr < 1e-6] = 1.0  # guard constant/near-constant features
+
+        def _robust(a: np.ndarray) -> np.ndarray:
+            return np.clip((a - med) / iqr, -10.0, 10.0).astype(np.float32)
+
+        train_ds.feat = _robust(train_ds.feat)
+        test_ds.feat = _robust(test_ds.feat)
 
     try:
         # Training owns its own runs/ logging; config_snapshot records the same provenance
@@ -234,10 +256,14 @@ def run_stmoe(
             # Batch through the held-out set; the net is multi-head, so read both the event
             # head (argmax = class) and the transient head (sigmoid > 0.5 = onset firing) in
             # one pass for a fair macro-F1 + detection comparison vs the baseline.
+            feat = test_ds.feat
             for i in range(0, len(X), bs):
                 # np.asarray(..., float32) gives a writable contiguous batch (memmap-safe).
                 xb = torch.from_numpy(np.asarray(X[i : i + bs], dtype=np.float32)).to(device)
-                out = net(xb)
+                eb = None
+                if feat is not None:
+                    eb = torch.from_numpy(np.asarray(feat[i : i + bs], dtype=np.float32)).to(device)
+                out = net(xb, eng=eb)
                 event_preds.append(out["event"].argmax(-1).cpu().numpy())
                 trans_preds.append((torch.sigmoid(out["transient"]) > 0.5).long().cpu().numpy())
         event_pred = np.concatenate(event_preds) if event_preds else np.array([])
@@ -251,6 +277,7 @@ def run_stmoe(
             "test_frac": test_frac,
             "seed": dcfg.seed,
             "streaming": streaming,
+            "hybrid": hybrid,
             "n_train_windows": int(len(train_ds)),
             "n_test_windows": int(len(test_ds)),
             "n_train_wells": len(set(train_ds.well_id)),

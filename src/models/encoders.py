@@ -55,7 +55,8 @@ class SubsystemEncoder(nn.Module):
             _TCNBlock(cfg.hidden, cfg.kernel_size, dilation=2**i, dropout=cfg.dropout)
             for i in range(cfg.n_blocks)
         )
-        self.head = nn.Linear(cfg.hidden, out_dim)
+        # Statistics pooling: mean + std + max over time, so the head sees 3*hidden.
+        self.head = nn.Linear(3 * cfg.hidden, out_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: (B, T, C_sub) -> embedding (B, out_dim)."""
@@ -63,7 +64,11 @@ class SubsystemEncoder(nn.Module):
         h = self.proj(x.transpose(1, 2))  # (B, hidden, T)
         for blk in self.blocks:
             h = blk(h)
-        # Mean-pool over time collapses the sequence into one fixed-width subsystem
-        # vector — the node this expert contributes to the fusion graph.
-        pooled = h.mean(dim=-1)  # global average over time
+        # Statistics pooling over time. Mean alone averages an oscillation away to its
+        # offset; std encodes per-feature oscillation amplitude and max captures extremes
+        # (e.g. dP_tree spikes) — both discriminative cues the GBT reads from its std/max
+        # window aggregates but plain mean-pooling throws away. Concatenate all three.
+        pooled = torch.cat(
+            [h.mean(dim=-1), h.std(dim=-1, unbiased=False), h.amax(dim=-1)], dim=-1
+        )
         return self.head(pooled)
