@@ -7,13 +7,16 @@ pretrained encoder weights warm-start the supervised ST-MoE.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
 
 from config import ModelConfig
 from models.network import STMoE
+
+log = logging.getLogger("oilgaswatch.train")
 
 
 class _Reconstructor(nn.Module):
@@ -57,22 +60,29 @@ def pretrain(
     Self-supervised: corrupt (mask) part of each window's input and train the encoders
     to reconstruct the clean target, learning useful signal structure from abundant
     unlabelled-friendly data (NORMAL + simulated + hand-drawn) before any supervision.
+
+    Memmap-safe: ``X`` may be a read-only np.memmap; batches are loaded one at a time
+    (never the whole array), so this works on full-data runs without exhausting RAM.
     """
     tcfg = mcfg.train
     if tcfg.ssl_epochs <= 0:
         return net  # SSL disabled -> return the cold-started encoders unchanged
-    model = _Reconstructor(net, n_channels=X.shape[-1]).to(device)
+    n, _, n_channels = X.shape
+    model = _Reconstructor(net, n_channels=n_channels).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=tcfg.lr, weight_decay=tcfg.weight_decay)
-    loader = DataLoader(
-        TensorDataset(torch.from_numpy(X.astype(np.float32))),
-        batch_size=tcfg.batch_size,
-        shuffle=True,
-    )
-    # Seeded generator so the random masking pattern is reproducible (AGENT.md §2).
+    # Seeded generators so both the shuffle and the masking pattern are reproducible (§2).
     gen = torch.Generator().manual_seed(tcfg.seed)
-    for _ in range(tcfg.ssl_epochs):
-        for (batch,) in loader:
-            batch = batch.to(device)
+    rng = np.random.default_rng(tcfg.seed)
+    bs = tcfg.batch_size
+    for ep in range(tcfg.ssl_epochs):
+        perm = rng.permutation(n)
+        tot = 0.0
+        nb = 0
+        for i in range(0, n, bs):
+            # Sort the batch indices so memmap reads stay roughly sequential (disk locality);
+            # order within a batch is irrelevant to the reconstruction objective.
+            idx = np.sort(perm[i : i + bs])
+            batch = torch.from_numpy(np.asarray(X[idx], dtype=np.float32)).to(device)
             # Mask ~ssl_mask_ratio of (sample, timestep) positions across all channels.
             mask = (torch.rand(batch.shape[:2], generator=gen) < tcfg.ssl_mask_ratio).to(device)
             corrupted = batch.clone()
@@ -82,6 +92,12 @@ def pretrain(
             loss = nn.functional.mse_loss(pred, target)
             opt.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             opt.step()
+            tot += loss.item()
+            nb += 1
+        log.info(
+            "ssl pretrain epoch %d/%d  recon_loss=%.4f", ep + 1, tcfg.ssl_epochs, tot / max(1, nb)
+        )
     # Encoder weights inside `net` are now warm-started in place; decoder is discarded.
     return net

@@ -6,7 +6,9 @@ Glues the layers into reproducible, well-disjoint runs whose metrics are logged 
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -198,9 +200,10 @@ def run_stmoe(
     split.assert_disjoint()
 
     # Sequence datasets keep the temporal axis (vs. flattened features) for the TCN encoders.
-    # streaming=True writes windows to disk-backed memmaps so full-data runs don't OOM; the
-    # cache files live under runs/_seqcache and are removed in the finally block below.
-    cache_dir = Path(dcfg.runs_dir) / "_seqcache"
+    # streaming=True writes windows to disk-backed memmaps so full-data runs don't OOM. The
+    # cache dir is per-process (pid) so concurrent runs never clobber each other's files; it
+    # is removed in the finally block below.
+    cache_dir = Path(dcfg.runs_dir) / "_seqcache" / str(os.getpid())
     if streaming:
         train_ds = build_sequence_memmap(
             split.train, dcfg, fcfg, mcfg, cache_dir / "train.f16",
@@ -306,7 +309,9 @@ def run_stmoe(
         return metrics
     finally:
         if streaming:
-            # Release the memmaps, then delete the (multi-GB) on-disk cache files.
+            # Release the memmaps, then delete this run's (multi-GB) per-pid cache dir.
             del train_ds, test_ds
             for fname in ("train.f16", "test.f16"):
                 (cache_dir / fname).unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                cache_dir.rmdir()

@@ -134,6 +134,8 @@ def cmd_train(args: argparse.Namespace) -> int:
         mcfg.train.batch_size = args.batch_size
     if args.stride_s:
         mcfg.window.stride_s = args.stride_s
+    if args.ssl_epochs >= 0:
+        mcfg.train.ssl_epochs = args.ssl_epochs
     metrics = run_stmoe(
         dcfg,
         fcfg,
@@ -210,6 +212,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     t.add_argument(
         "--hybrid", action="store_true", help="inject engineered features into the ST-MoE"
+    )
+    t.add_argument(
+        "--ssl-epochs", type=int, default=-1, help="SSL pretrain epochs (-1 = config, 0 = off)"
     )
     t.set_defaults(func=cmd_train)
 

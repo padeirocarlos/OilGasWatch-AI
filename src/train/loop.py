@@ -102,6 +102,14 @@ def train_stmoe(
     n_eng = int(train_ds.feat.shape[1]) if train_ds.feat is not None else 0
     net = STMoE(mcfg, n_states=n_states, n_eng_features=n_eng).to(device)
 
+    # Optional SSL warm-start: masked-reconstruction pretraining of the encoders on the
+    # (unlabelled-friendly) train windows before supervision. No-op when ssl_epochs == 0.
+    if tcfg.ssl_epochs > 0:
+        from train.ssl_pretrain import pretrain
+
+        log.info("ssl pretraining encoders for %d epochs", tcfg.ssl_epochs)
+        pretrain(net, train_ds.X, mcfg, device=device)
+
     # Class-balanced focal loss for the imbalanced event head.
     # effective_number_weights down-weights common classes (NORMAL) per Cui et al. 2019.
     weights = effective_number_weights(train_ds.event, N_CLASSES, mcfg.loss.class_balanced_beta)
