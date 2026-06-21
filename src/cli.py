@@ -136,6 +136,10 @@ def cmd_train(args: argparse.Namespace) -> int:
         mcfg.window.stride_s = args.stride_s
     if args.ssl_epochs >= 0:
         mcfg.train.ssl_epochs = args.ssl_epochs
+    if args.no_fusion:
+        mcfg.moe.use_fusion = False
+    if args.no_gating:
+        mcfg.moe.use_gating = False
     metrics = run_stmoe(
         dcfg,
         fcfg,
@@ -215,6 +219,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     t.add_argument(
         "--ssl-epochs", type=int, default=-1, help="SSL pretrain epochs (-1 = config, 0 = off)"
+    )
+    t.add_argument("--no-fusion", action="store_true", help="ablate cross-subsystem fusion")
+    t.add_argument(
+        "--no-gating", action="store_true", help="ablate MoE gating (mean over experts)"
     )
     t.set_defaults(func=cmd_train)
 

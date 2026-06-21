@@ -39,8 +39,10 @@ class STMoE(nn.Module):
         self.experts = nn.ModuleList(
             SubsystemEncoder(len(idx), cfg.encoder, out_dim=dim) for idx in self.subsystems
         )
-        self.fusion = WellGraphAttention(len(self.subsystems), dim)
-        self.gate = Gating(cfg.moe)
+        # Fusion and gating are ablatable (cfg.moe.use_fusion / use_gating). When off, the
+        # module is omitted and forward() falls back to identity / mean over experts.
+        self.fusion = WellGraphAttention(len(self.subsystems), dim) if cfg.moe.use_fusion else None
+        self.gate = Gating(cfg.moe) if cfg.moe.use_gating else None
 
         # Hybrid branch: project the per-window engineered feature vector (the GBT's exact
         # inputs) to `dim` and concatenate to the learned mixture before the heads. This hands
@@ -75,11 +77,22 @@ class STMoE(nn.Module):
             embeds.append(enc(x[:, :, idx]))
         nodes = torch.stack(embeds, dim=1)  # (B, n_experts, dim)
         # 2) Fuse: experts attend to one another to surface cross-component faults.
-        # 3) Gate: soft-route into one pooled mixture vector.
-        # expert_mask threads through both stages so a dropped subsystem is ignored
-        # end-to-end — the single source of graceful degradation (AGENT.md §7).
-        fused = self.fusion(nodes, mask=expert_mask)
-        mixture, gate_w = self.gate(fused, mask=expert_mask)
+        #    (ablation: identity passthrough when fusion is disabled)
+        fused = self.fusion(nodes, mask=expert_mask) if self.fusion is not None else nodes
+        # 3) Gate: soft-route into one pooled mixture vector. expert_mask threads through
+        #    both stages so a dropped subsystem is ignored end-to-end (graceful degradation).
+        if self.gate is not None:
+            mixture, gate_w = self.gate(fused, mask=expert_mask)
+        else:
+            # ablation: uniform (mean) combination of experts, mask-aware
+            if expert_mask is not None:
+                w = expert_mask.float()
+                w = w / w.sum(dim=1, keepdim=True).clamp_min(1e-6)
+                mixture = torch.einsum("be,bed->bd", w, fused)
+                gate_w = w
+            else:
+                mixture = fused.mean(dim=1)
+                gate_w = torch.full(fused.shape[:2], 1.0 / fused.shape[1], device=fused.device)
         # 4) Hybrid: graft the engineered-feature embedding onto the learned mixture.
         if self.eng_proj is not None and eng is not None:
             mixture = torch.cat([mixture, self.eng_proj(eng)], dim=-1)

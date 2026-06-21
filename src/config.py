@@ -136,6 +136,11 @@ class MoEConfig(BaseModel):
     # Must equal the 4 subsystem groups (A/B/C/D) in schema.SUBSYSTEM_CHANNELS.
     n_experts: int = 4  # one per subsystem
     gating_hidden: int = 64  # gating net soft-routes over experts; valid with any masked.
+    # Ablation toggles. use_fusion=False skips the cross-subsystem graph attention;
+    # use_gating=False replaces soft routing with a plain mean over experts. Both True
+    # is the full ST-MoE; flipping them measures each component's contribution.
+    use_fusion: bool = True
+    use_gating: bool = True
 
 
 class HeadsConfig(BaseModel):
