@@ -57,6 +57,8 @@ based on a small-data ablation. The `--no-fusion` / `--no-gating` toggles exist 
 | **Richer pooling** (mean+std+max in `SubsystemEncoder`) | −0.045 macro-F1 vs mean-only | **rejected**, reverted to mean |
 | **SSL pretraining** (masked reconstruction, `ssl_epochs>0`) | stride-150: −0.067 macro-F1, −0.63 class-4 (biases encoders toward the dominant signal) | **rejected** for classification; only helps absolute latency |
 | **stride-150 vs stride-300** (hybrid) | finer detection grid + more data → best classifier *and* earlier warning | **stride-150 preferred** |
+| **Coherence features** (cross-channel covariance top-eigenvalue / |corr|, for FLOW_INSTABILITY) | GBT: ~0.5% gain, class-4 F1 unchanged (0.002) | **rejected** — flow instability is not a coherent multi-channel oscillation in this formulation |
+| **Trend / rolling-slope features** | GBT: used a little but noisy on the well-disjoint split → −0.015 macro-F1 | **rejected** |
 
 ### Best model to date
 **Full data · stratified · stride-150 · hybrid · no SSL · fusion+gating** →
