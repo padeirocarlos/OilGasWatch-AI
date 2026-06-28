@@ -72,7 +72,9 @@ def main() -> None:
                     "macro_f1": rep.macro_f1,
                     "per_class": rep.per_class_f1,
                     "per_class_real": (rep_real.per_class_f1 if rep_real else {}),
-                    "real_support": {NAMES[i]: int((ds.event[tem][rr] == i).sum()) for i in range(10)},
+                    "real_support": {
+                        NAMES[i]: int((ds.event[tem][rr] == i).sum()) for i in range(10)
+                    },
                 }
             )
             print(

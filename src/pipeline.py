@@ -17,7 +17,7 @@ import numpy as np
 
 from config import DataConfig, FeaturesConfig, ModelConfig
 from dataset.build import build_sequence_dataset, build_window_dataset
-from dataset.splitter import WellDisjointSplitter
+from dataset.splitter import Split, WellDisjointSplitter
 from eval.detection import time_to_detection
 from eval.metrics import classification_report
 from ingest import discover_instances
@@ -165,6 +165,7 @@ def run_stmoe(
     stratified: bool = False,
     streaming: bool = False,
     hybrid: bool = False,
+    split: Split | None = None,
     progress: bool = True,
 ) -> dict:
     """Train the ST-MoE on a well-disjoint split and evaluate on held-out wells.
@@ -186,17 +187,19 @@ def run_stmoe(
     # Train loop uses its own seed (mcfg.train.seed); the split still uses dcfg.seed so the
     # well partition is identical to the baseline's — an apples-to-apples comparison (§7).
     seed_everything(mcfg.train.seed)
-    metas = discover_instances(dcfg, classes=classes)
-    # Apply the SAME deterministic per-class cap as run_baseline before splitting, so both
-    # models train and test on exactly the same wells (not just the same policy).
-    if limit_per_class:
-        metas = _cap_per_class(metas, limit_per_class, dcfg.seed)
-    splitter = WellDisjointSplitter(seed=dcfg.seed)
-    split = (
-        splitter.stratified_train_test_split(metas, test_frac=test_frac)
-        if stratified
-        else splitter.train_test_split(metas, test_frac=test_frac)
-    )
+    # A pre-made split (e.g. one k-fold) can be passed in; otherwise discover + split here.
+    if split is None:
+        metas = discover_instances(dcfg, classes=classes)
+        # Apply the SAME deterministic per-class cap as run_baseline before splitting, so
+        # both models train and test on exactly the same wells (not just the same policy).
+        if limit_per_class:
+            metas = _cap_per_class(metas, limit_per_class, dcfg.seed)
+        splitter = WellDisjointSplitter(seed=dcfg.seed)
+        split = (
+            splitter.stratified_train_test_split(metas, test_frac=test_frac)
+            if stratified
+            else splitter.train_test_split(metas, test_frac=test_frac)
+        )
     split.assert_disjoint()
 
     # Sequence datasets keep the temporal axis (vs. flattened features) for the TCN encoders.
@@ -206,12 +209,22 @@ def run_stmoe(
     cache_dir = Path(dcfg.runs_dir) / "_seqcache" / str(os.getpid())
     if streaming:
         train_ds = build_sequence_memmap(
-            split.train, dcfg, fcfg, mcfg, cache_dir / "train.f16",
-            with_features=hybrid, progress=progress,
+            split.train,
+            dcfg,
+            fcfg,
+            mcfg,
+            cache_dir / "train.f16",
+            with_features=hybrid,
+            progress=progress,
         )
         test_ds = build_sequence_memmap(
-            split.test, dcfg, fcfg, mcfg, cache_dir / "test.f16",
-            with_features=hybrid, progress=progress,
+            split.test,
+            dcfg,
+            fcfg,
+            mcfg,
+            cache_dir / "test.f16",
+            with_features=hybrid,
+            progress=progress,
         )
     else:
         train_ds = build_sequence_dataset(
@@ -272,6 +285,11 @@ def run_stmoe(
         event_pred = np.concatenate(event_preds) if event_preds else np.array([])
         trans_pred = np.concatenate(trans_preds) if trans_preds else np.array([])
         report = classification_report(test_ds.event, event_pred)
+        # Real-only scores: real wells have ids like WELL-xxxxx; sim/drawn are SIM::/DRAWN::.
+        real = np.array([str(w).startswith("WELL-") for w in test_ds.well_id])
+        report_real = (
+            classification_report(test_ds.event[real], event_pred[real]) if real.any() else None
+        )
 
         metrics = {
             "run_id": result.run_id,
@@ -289,6 +307,10 @@ def run_stmoe(
             "per_class_f1": report.per_class_f1,
             "support": report.support,
             "confusion": report.confusion.tolist(),
+            # Real-only (field-honest) scores: simulated/hand-drawn test windows excluded.
+            "macro_f1_real": (report_real.macro_f1 if report_real else None),
+            "per_class_f1_real": (report_real.per_class_f1 if report_real else {}),
+            "support_real": (report_real.support if report_real else {}),
         }
         # Detection latency from the transient head, scored exactly like the baseline's
         # separate transient classifier so the two are directly comparable.
