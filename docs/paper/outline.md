@@ -89,22 +89,47 @@ Engineering*, *IEEE Access*.
 - **Robustness** under sensor freeze / channel dropout (we have `eval/robustness`) `[NEED: run]`.
 
 ## 5. Experiments & results
-### 5.1 Main comparison *(single split, seed 42 — `[NEED]` multi-seed)*
+### 5.1 Main comparison
+**Rigorous (5-fold well-disjoint CV × 3 seeds = 15 reps), stride-300:**
+
 | model | macro-F1 (all) | FLOW_INSTABILITY F1 | latency |
 |---|---|---|---|
-| GBT (de-leaked) | *0.880* | *0.01* | *+66 s* |
-| ST-MoE (raw) | *0.847* | *0.07* | *−570 s* |
-| **Hybrid** | ***0.965*** | ***0.81*** | ***−396…−776 s*** |
+| **GBT (de-leaked)** | **0.832 ± 0.057** | **0.171 ± 0.261** | +66 s *(single split)* |
+| ST-MoE (raw) | *0.847 (single split)* `[k-fold N/A — too costly]` | *0.07* | *−570 s* |
+| **Hybrid** | *0.965 (single split)* — **k-fold in progress** (deep rep, 3 folds) | *0.81* | *−396…−776 s* |
+
+Note: the GBT single-split 0.880 sat at the **high end** of the fold distribution; the honest
+CV mean is **0.832 ± 0.057**. FLOW_INSTABILITY shows huge fold variance (0.171 ± 0.261) — it
+swings 0.00–0.89 depending on which class-4 wells are held out, itself a finding worth stating.
 
 ### 5.2 The leakage finding
 - `__norm_fallback` perfectly flags steady-state classes → baseline *0.944 → 0.880* when
   removed. Cautionary result for 3W feature engineering.
 
 ### 5.3 Simulation inflation / real-only evaluation (headline)
-- All-source *0.880* vs real-only per-class: NORMAL *0.82*, HYDRATE_PROD *0.96*,
-  FLOW_INSTABILITY *0.01 (GBT)/0.81 (hybrid)*; 5 classes unevaluable on real data.
-- **Honest real-evaluable macro-F1 ≈ 0.85–0.90 (hybrid)**, not 0.965.
-- `[NEED]` real-only k-fold for the classes with sufficient real data.
+**Rigorous GBT per-class F1 (15-rep CV), all-source vs real-only** — the paper's key table
+(from `docs/paper/results_kfold.md`). "real F1" is averaged only over folds where the class
+has real test data:
+
+| class | F1 all (mean±std) | F1 real (mean±std) | median real support |
+|---|---|---|---|
+| NORMAL | 0.793 ± 0.113 | 0.754 ± 0.140 | 8428 |
+| ABRUPT_BSW | 0.993 ± 0.007 | **0.216 ± 0.336** | 31 |
+| SPURIOUS_DHSV | 0.896 ± 0.134 | 0.678 ± 0.216 | 27 |
+| SEVERE_SLUGGING | 0.935 ± 0.110 | — (0 real) | 0 |
+| FLOW_INSTABILITY | 0.171 ± 0.261 | 0.184 ± 0.266 | 989 |
+| RAPID_PROD_LOSS | 0.985 ± 0.027 | **0.117 ± 0.174** | 32 |
+| QUICK_RESTRICTION | 0.978 ± 0.029 | — (0 real) | 0 |
+| SCALING_IN_PCK | 0.689 ± 0.369 | 0.554 ± 0.403 | 4539 |
+| HYDRATE_PRODUCTION | 0.928 ± 0.114 | 0.876 ± 0.186 | 2531 |
+| HYDRATE_SERVICE | 0.950 ± 0.087 | 0.376 ± 0.363 | 38 |
+
+**The story in one table:** classes with ~0.99 all-source F1 (BSW, prod-loss, restriction,
+slugging) **collapse or vanish on real data** (0.12–0.22, or no real test windows) — their
+scores are *simulation artifacts*. Classes with real data **hold up** (NORMAL 0.75,
+HYDRATE_PROD 0.88). FLOW_INSTABILITY (100% real) is consistent all-vs-real (~0.18 for the GBT;
+0.81 for the hybrid) — the only fault class judged honestly. Deep-hybrid real-only k-fold:
+`[in progress]`.
 
 ### 5.4 Ablations / negative results (rigor section)
 - Pull the table from `docs/ablations.md`: richer pooling (−0.045), SSL (−0.067), cap-60
@@ -124,8 +149,9 @@ Engineering*, *IEEE Access*.
 ## 6. Discussion
 - Why physics features dominate; why the MoE machinery's value is data-dependent.
 - The real bottleneck = real-data scarcity, not modelling.
-- **Limitations** (be candid): single-seed in current draft, no external baselines yet,
-  binary-separability confound, hydrate-curve coefficients unvalidated.
+- **Limitations** (be candid): GBT results are 15-rep CV, but the **deep hybrid CV is only a
+  3-fold reduced rep** (compute-bounded); no external baselines yet; binary-separability
+  confound; hydrate-curve coefficients unvalidated.
 
 ## 7. Conclusion
 - Trustworthy evaluation changes the 3W performance picture; a physics-informed hybrid is
@@ -141,8 +167,10 @@ Engineering*, *IEEE Access*.
 ---
 
 ## Experiment checklist before submission (`[NEED]`)
-- [ ] 5-fold well-disjoint CV × ≥3 seeds → mean±std for §5.1, §5.3, §5.4
-- [ ] Real-only k-fold for real-evaluable classes
+- [x] **GBT** 5-fold well-disjoint CV × 3 seeds → mean±std (`experiments/kfold_eval.py`)
+- [x] Real-only per-class CV for the GBT (§5.3 table)
+- [~] **Deep hybrid** CV — reduced 3-fold rep running (`experiments/kfold_deep.py`);
+      full 5-fold × 3-seed (~10 GPU-h) still `[NEED]`
 - [ ] ≥1–2 literature/published-method baselines on the same protocol
 - [ ] Run robustness probes (`eval/robustness`) and tabulate
 - [ ] Formal time-to-detection definition + statistics
