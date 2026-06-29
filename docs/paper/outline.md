@@ -92,21 +92,23 @@ Engineering*, *IEEE Access*.
 ### 5.1 Main comparison
 **Rigorous (5-fold well-disjoint CV × 3 seeds = 15 reps), stride-300:**
 
-| model | macro-F1 (all) | FLOW_INSTABILITY F1 | latency |
+| model | macro-F1 (all) | macro-F1 (real) | FLOW_INSTABILITY F1 |
 |---|---|---|---|
-| **GBT (de-leaked)** | **0.832 ± 0.057** (15 reps) | **0.171 ± 0.261** | +66 s *(single split)* |
-| ST-MoE (raw) | *0.847 (single split)* `[k-fold N/A — too costly]` | *0.07* | *−570 s* |
-| **Hybrid — stratified single split** | *0.965* | *0.81* | *−396…−776 s* |
-| **Hybrid — k-fold (fold 0, n=1)** | **0.781** | **0.085** | — |
+| **GBT (de-leaked)** — 15-rep CV | **0.832 ± 0.057** | (per-class, §5.3) | **0.171 ± 0.261** |
+| **Hybrid** — 5-fold CV *(4/5 folds; fold 4 running)* | **0.855 ± 0.059** | **0.357 ± 0.073** | **0.355 ± 0.324** |
+| Hybrid — stratified single split *(optimistic)* | *0.965* | — | *0.81* |
 
-> ⚠️ **The hybrid's advantage over the GBT is NOT established under cross-validation.** On the
-> *same* held-out wells (seed-42 fold 0) the hybrid scores **0.781 — *below* the GBT's 0.822 on
-> that fold**, and far below its own stratified-single-split 0.965. Two explanations, both
-> important: (a) the stratified split (balanced rare classes in test) is more favourable than a
-> random k-fold; (b) the deep model has high variance and a single fold is unreliable (the GBT
-> alone swings 0.75–0.93 across folds). **The 0.965 headline is split-dependent and likely
-> optimistic.** A full deep k-fold is required before claiming the hybrid beats the GBT —
-> `[NEED]`. (Single fold = compute-bounded reduced rep.)
+Per-fold (hybrid vs GBT, *same* seed-42 wells): fold 0 0.781 vs 0.822; fold 1 0.933 vs 0.930;
+fold 2 0.884 vs 0.851; fold 3 0.821 vs 0.804.
+
+> ✅ **Verdict (under cross-validation): the hybrid and the GBT are essentially tied** —
+> hybrid **0.855 ± 0.059** vs GBT **0.832 ± 0.057** (a marginal, within-noise edge to the
+> hybrid, which wins 3/4 folds but loses fold 0). This is **far from the 0.965 ≫ 0.880 the
+> single split implied** — the stratified single split was *optimistic*. The hybrid's one
+> consistent edge is **FLOW_INSTABILITY** (0.355 vs ~0.30) and early detection, but FLOW_INST
+> variance is enormous (±0.324: it swings 0.003–0.790 across folds). **Honest framing: the
+> hybrid is competitive with — not dominant over — the GBT; report mean±std, not the single
+> split.** Latency: hybrid −396…−776 s vs GBT +66 s (single split; CV `[NEED]`).
 
 Note: the GBT single-split 0.880 sat at the **high end** of the fold distribution; the honest
 CV mean is **0.832 ± 0.057**. FLOW_INSTABILITY shows huge fold variance (0.171 ± 0.261) — it
@@ -161,14 +163,21 @@ GBT pattern (simulated classes inflate; real-evaluable classes hold: NORMAL 0.81
 ## 6. Discussion
 - Why physics features dominate; why the MoE machinery's value is data-dependent.
 - The real bottleneck = real-data scarcity, not modelling.
-- **Limitations** (be candid): GBT results are 15-rep CV, but the **deep hybrid CV is only a
-  single fold** (compute-bounded) — and *that fold underperforms the GBT*, so **the hybrid's
-  headline 0.965 advantage is not yet CV-validated and may be split-dependent**; no external
-  baselines yet; binary-separability confound; hydrate-curve coefficients unvalidated.
+- **Key finding restated:** under 5-fold CV the **hybrid (0.855 ± 0.059) ≈ GBT (0.832 ± 0.057)**
+  — competitive, not dominant; the 0.965 single-split was optimistic. The hybrid's real edge is
+  FLOW_INSTABILITY + early detection, not overall macro-F1.
+- **Limitations** (be candid): hybrid CV is single-seed 5-fold (`[NEED]` multi-seed); FLOW_INST
+  has enormous fold variance (±0.32); no external baselines yet; binary-separability confound;
+  hydrate-curve coefficients unvalidated.
 
 ## 7. Conclusion
-- Trustworthy evaluation changes the 3W performance picture; a physics-informed hybrid is
-  a strong, honest method; most fault classes need more real data, not better models.
+- Trustworthy evaluation (well-disjoint CV, source-stratified, leakage-aware) **materially
+  changes the 3W picture**: single-split scores are inflated, most fault classes are
+  simulation-only, and under CV the physics-informed hybrid is **competitive with — not
+  dominant over — a strong GBT baseline** (0.855 vs 0.832). The hybrid's value is concentrated
+  in the one hard real class (FLOW_INSTABILITY) and early detection. The dominant limitation is
+  **real-data scarcity, not model capacity** — better evaluation and more real data matter more
+  than better models.
 
 ## Reproducibility statement
 - Public code, seeded, well-disjoint, config-driven; `docs/ablations.md` + `docs/feature_layout.md`.
