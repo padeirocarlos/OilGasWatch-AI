@@ -94,9 +94,19 @@ Engineering*, *IEEE Access*.
 
 | model | macro-F1 (all) | FLOW_INSTABILITY F1 | latency |
 |---|---|---|---|
-| **GBT (de-leaked)** | **0.832 ± 0.057** | **0.171 ± 0.261** | +66 s *(single split)* |
+| **GBT (de-leaked)** | **0.832 ± 0.057** (15 reps) | **0.171 ± 0.261** | +66 s *(single split)* |
 | ST-MoE (raw) | *0.847 (single split)* `[k-fold N/A — too costly]` | *0.07* | *−570 s* |
-| **Hybrid** | *0.965 (single split)* — **k-fold in progress** (deep rep, 3 folds) | *0.81* | *−396…−776 s* |
+| **Hybrid — stratified single split** | *0.965* | *0.81* | *−396…−776 s* |
+| **Hybrid — k-fold (fold 0, n=1)** | **0.781** | **0.085** | — |
+
+> ⚠️ **The hybrid's advantage over the GBT is NOT established under cross-validation.** On the
+> *same* held-out wells (seed-42 fold 0) the hybrid scores **0.781 — *below* the GBT's 0.822 on
+> that fold**, and far below its own stratified-single-split 0.965. Two explanations, both
+> important: (a) the stratified split (balanced rare classes in test) is more favourable than a
+> random k-fold; (b) the deep model has high variance and a single fold is unreliable (the GBT
+> alone swings 0.75–0.93 across folds). **The 0.965 headline is split-dependent and likely
+> optimistic.** A full deep k-fold is required before claiming the hybrid beats the GBT —
+> `[NEED]`. (Single fold = compute-bounded reduced rep.)
 
 Note: the GBT single-split 0.880 sat at the **high end** of the fold distribution; the honest
 CV mean is **0.832 ± 0.057**. FLOW_INSTABILITY shows huge fold variance (0.171 ± 0.261) — it
@@ -128,8 +138,10 @@ has real test data:
 slugging) **collapse or vanish on real data** (0.12–0.22, or no real test windows) — their
 scores are *simulation artifacts*. Classes with real data **hold up** (NORMAL 0.75,
 HYDRATE_PROD 0.88). FLOW_INSTABILITY (100% real) is consistent all-vs-real (~0.18 for the GBT;
-0.81 for the hybrid) — the only fault class judged honestly. Deep-hybrid real-only k-fold:
-`[in progress]`.
+0.81 for the hybrid) — the only fault class judged honestly. **Deep-hybrid fold-0 (n=1):
+all-source macro-F1 0.781, real-only 0.292**, FLOW_INSTABILITY 0.085 — consistent with the
+GBT pattern (simulated classes inflate; real-evaluable classes hold: NORMAL 0.81, HYDRATE_PROD
+0.75) but see the §5.1 caveat that this fold *underperforms* the GBT. Full deep k-fold `[NEED]`.
 
 ### 5.4 Ablations / negative results (rigor section)
 - Pull the table from `docs/ablations.md`: richer pooling (−0.045), SSL (−0.067), cap-60
@@ -150,8 +162,9 @@ HYDRATE_PROD 0.88). FLOW_INSTABILITY (100% real) is consistent all-vs-real (~0.1
 - Why physics features dominate; why the MoE machinery's value is data-dependent.
 - The real bottleneck = real-data scarcity, not modelling.
 - **Limitations** (be candid): GBT results are 15-rep CV, but the **deep hybrid CV is only a
-  3-fold reduced rep** (compute-bounded); no external baselines yet; binary-separability
-  confound; hydrate-curve coefficients unvalidated.
+  single fold** (compute-bounded) — and *that fold underperforms the GBT*, so **the hybrid's
+  headline 0.965 advantage is not yet CV-validated and may be split-dependent**; no external
+  baselines yet; binary-separability confound; hydrate-curve coefficients unvalidated.
 
 ## 7. Conclusion
 - Trustworthy evaluation changes the 3W performance picture; a physics-informed hybrid is

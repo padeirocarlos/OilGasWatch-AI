@@ -1,0 +1,71 @@
+[
+  {
+    "run_id": "20260629-025426",
+    "kind": "stmoe",
+    "classes": null,
+    "test_frac": 0.25,
+    "seed": 42,
+    "streaming": true,
+    "hybrid": true,
+    "n_train_windows": 174590,
+    "n_test_windows": 65636,
+    "n_train_wells": 391,
+    "n_test_wells": 98,
+    "macro_f1": 0.7804960460464871,
+    "per_class_f1": {
+      "NORMAL": 0.8239387613082811,
+      "ABRUPT_INCREASE_OF_BSW": 0.85770093322723,
+      "SPURIOUS_CLOSURE_OF_DHSV": 0.8513513513513513,
+      "SEVERE_SLUGGING": 0.8803078191562457,
+      "FLOW_INSTABILITY": 0.08450704225352113,
+      "RAPID_PRODUCTIVITY_LOSS": 0.8422749483653217,
+      "QUICK_RESTRICTION_IN_PCK": 0.9913758789969483,
+      "SCALING_IN_PCK": 0.6390938135347081,
+      "HYDRATE_IN_PRODUCTION_LINE": 0.834866220735786,
+      "HYDRATE_IN_SERVICE_LINE": 0.999543691535478
+    },
+    "support": {
+      "NORMAL": 18037,
+      "ABRUPT_INCREASE_OF_BSW": 5967,
+      "SPURIOUS_CLOSURE_OF_DHSV": 337,
+      "SEVERE_SLUGGING": 3203,
+      "FLOW_INSTABILITY": 4485,
+      "RAPID_PRODUCTIVITY_LOSS": 8360,
+      "QUICK_RESTRICTION_IN_PCK": 3793,
+      "SCALING_IN_PCK": 11572,
+      "HYDRATE_IN_PRODUCTION_LINE": 5499,
+      "HYDRATE_IN_SERVICE_LINE": 4383
+    },
+    "macro_f1_real": 0.2922647331529609,
+    "per_class_f1_real": {
+      "NORMAL": 0.8059733276545905,
+      "ABRUPT_INCREASE_OF_BSW": 0.0,
+      "SPURIOUS_CLOSURE_OF_DHSV": 0.7934272300469484,
+      "SEVERE_SLUGGING": 0.0,
+      "FLOW_INSTABILITY": 0.08450704225352113,
+      "RAPID_PRODUCTIVITY_LOSS": 0.0,
+      "QUICK_RESTRICTION_IN_PCK": 0.0,
+      "SCALING_IN_PCK": 0.48507587126896784,
+      "HYDRATE_IN_PRODUCTION_LINE": 0.7536638603055815,
+      "HYDRATE_IN_SERVICE_LINE": 0.0
+    },
+    "support_real": {
+      "NORMAL": 15994,
+      "ABRUPT_INCREASE_OF_BSW": 31,
+      "SPURIOUS_CLOSURE_OF_DHSV": 254,
+      "SEVERE_SLUGGING": 0,
+      "FLOW_INSTABILITY": 4485,
+      "RAPID_PRODUCTIVITY_LOSS": 0,
+      "QUICK_RESTRICTION_IN_PCK": 57,
+      "SCALING_IN_PCK": 8956,
+      "HYDRATE_IN_PRODUCTION_LINE": 3922,
+      "HYDRATE_IN_SERVICE_LINE": 0
+    },
+    "detection": {
+      "detection_rate": 0.9516129032258065,
+      "median_latency_windows": 0.0,
+      "mean_latency_windows": -1.8305084745762712,
+      "n_instances": 124
+    }
+  }
+]
